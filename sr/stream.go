@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	ffmpeg "ffmpeg-go"
 	"fmt"
-	"github.com/disintegration/imaging"
-	ffmpeg "github.com/u2takey/ffmpeg-go"
-	"github.com/yutopp/go-flv"
+	goflv "github.com/yutopp/go-flv"
 	"io"
 	"log"
-	"os"
 )
 
 // ExampleStream
@@ -65,25 +62,42 @@ func startFFmpegProcess1(infileName string, writer io.WriteCloser) <-chan error 
 	return done
 }
 
-func startFFmpegProcess2(reader io.Reader) <-chan error {
+func startFFmpegProcess2_(reader io.Reader) <-chan error {
+	return nil
 	done := make(chan error)
 	go func() {
-		buf := bytes.NewBuffer(nil)
 		err := ffmpeg.Input("pipe:",
 			ffmpeg.KwArgs{"format": "flv"}).
-			Output("pipe:", ffmpeg.KwArgs{"vframes": 1, "format": "image2", "vcodec": "mjpeg"}).
-			WithOutput(buf, os.Stdout).
+			Output("idr_%03d.png").
+			OverWriteOutput().
 			WithInput(reader).
 			Run()
 		checkError(err)
-		img, err := imaging.Decode(buf)
-		err = imaging.Save(img, "./out1.jpeg")
+		done <- err
 		close(done)
 	}()
 	return done
 }
 
-func startFFmpegProcess2_(reader io.Reader) <-chan error {
+func startFFmpegProcess3(reader io.Reader) <-chan error {
+	log.Println("Starting ffmpeg process3")
+	done := make(chan error)
+	go func() {
+
+		err := ffmpeg.Input("pipe:",
+			ffmpeg.KwArgs{"format": "flv"}).
+			Output("fm_sr.flv", ffmpeg.KwArgs{"vf scale": "1440:-1"}).
+			OverWriteOutput().
+			WithInput(reader).
+			Run()
+		log.Println("ffmpeg process3 done")
+		done <- err
+		close(done)
+	}()
+	return done
+}
+
+func startFFmpegProcess2(reader io.Reader) <-chan error {
 	log.Println("Starting ffmpeg process2")
 	done := make(chan error)
 
@@ -114,7 +128,7 @@ func startFFmpegProcess2_(reader io.Reader) <-chan error {
 
 func process(reader io.ReadCloser, writer io.WriteCloser) {
 	go func() {
-		dec, err := flv.NewDecoder(reader)
+		dec, err := goflv.NewDecoder(reader)
 		log.Printf("Header: %+v", dec.Header())
 		checkErr(err)
 
@@ -134,9 +148,12 @@ func process(reader io.ReadCloser, writer io.WriteCloser) {
 			_, err = tag.ParseMediaTagHeader(data, header.TagType == byte(9))
 			checkErr(err)
 			header.pktHeader = &tag
+
 			if header.TagType == byte(9) {
+
 				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
 					fmt.Println(vh.IsKeyFrame(), " ", len(data))
+
 					if vh.IsKeyFrame() || vh.IsSeq() {
 						//data := header.TagBytes
 						//fmt.Println(data[9])
