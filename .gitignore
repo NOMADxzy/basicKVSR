@@ -2,4 +2,6 @@
 
 *.flv
 *.mp4
+*.go
 examples/
+sr/out_frame
