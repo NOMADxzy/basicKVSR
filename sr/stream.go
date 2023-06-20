@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	ffmpeg "ffmpeg-go"
 	"fmt"
 	goflv "github.com/yutopp/go-flv"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
+	"os/exec"
 )
 
 // ExampleStream
@@ -15,6 +20,7 @@ import (
 // outFileName: output filename
 // dream: Use DeepDream frame processing (requires tensorflow)
 var flvFile1 *File
+var seqBytes []byte
 
 func getVideoSize(fileName string) (int, int) {
 	log.Println("Getting video size for", fileName)
@@ -126,21 +132,50 @@ func startFFmpegProcess2(reader io.Reader) <-chan error {
 	return done
 }
 
+func readKeyFrame(keyframeBytes []byte, id int) {
+	log.Println("Starting read KeyFrame")
+
+	tmpFile, _ := CreateProtoFile(fmt.Sprintf("tmp/%d.flv", id))
+	tmpFile.file.Write(HEADER_BYTES)
+	tmpFile.file.Write(seqBytes)
+	binary.Write(tmpFile.file, binary.BigEndian, uint32(len(seqBytes)))
+	tmpFile.file.Write(keyframeBytes)
+	binary.Write(tmpFile.file, binary.BigEndian, uint32(len(keyframeBytes)))
+	tmpFile.Close()
+
+	command := exec.Command("ffmpeg", "-y", "-i", fmt.Sprintf("tmp/%d.flv", id), fmt.Sprintf("tmp/%d.png", id))
+	err := command.Run()
+	checkError(err)
+
+	os.Remove(fmt.Sprintf("tmp/%d.flv", id)) //移除无用文件
+
+	img_path := fmt.Sprintf("/Users/nomad/Desktop/ffmpeg-go/tmp/%d.png", id)
+	resp, err := http.Get("http://127.0.0.1:5000/?img_path=" + img_path)
+	if err != nil {
+		panic(err)
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	encToH264("outframe.flv", bytes.NewReader(body), 1280, 720)
+
+	//post to python
+
+}
+
 func process(reader io.ReadCloser, writer io.WriteCloser) {
 	go func() {
 		dec, err := goflv.NewDecoder(reader)
 		log.Printf("Header: %+v", dec.Header())
 		checkErr(err)
 
-		var tmpBuf = make([]byte, 4)
+		var tmpBuf = make([]byte, 4) //读出header后面4个字节
 		_, err = io.ReadFull(reader, tmpBuf)
 		checkErr(err)
 
-		HEADER_BYTES := []byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00}
-		_, _ = writer.Write(HEADER_BYTES)
 		flvFile, _ := CreateFile("movie.flv")
 
-		for {
+		for id := 0; ; id += 1 {
 			header, data, err := ReadTag(reader)
 			checkErr(err)
 
@@ -153,20 +188,14 @@ func process(reader io.ReadCloser, writer io.WriteCloser) {
 
 				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
 					fmt.Println(vh.IsKeyFrame(), " ", len(data))
+					err = flvFile.WriteTagDirect(header.TagBytes)
+					checkError(err)
 
-					if vh.IsKeyFrame() || vh.IsSeq() {
-						//data := header.TagBytes
-						//fmt.Println(data[9])
+					if vh.IsSeq() {
+						seqBytes = header.TagBytes
 
-						err = flvFile.WriteTagDirect(header.TagBytes)
-						checkError(err)
-
-						n, err := writer.Write(header.TagBytes)
-						if n != len(header.TagBytes) || err != nil {
-							panic(fmt.Sprintf("write error: %d, %s", n, err))
-						}
-						err = binary.Write(writer, binary.BigEndian, uint32(len(data)+11))
-						checkErr(err)
+					} else if vh.IsKeyFrame() {
+						readKeyFrame(header.TagBytes, id)
 					}
 				}
 			}
