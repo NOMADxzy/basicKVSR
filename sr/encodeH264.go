@@ -10,26 +10,34 @@ import (
 	"net/http"
 )
 
-func encToH264(out io.Writer, buf io.Reader, width, height int) {
+var pr *io.PipeReader
+var pw *io.PipeWriter
+var keyChan chan []byte
+
+func encToH264(buf io.Reader, width, height int) {
 	log.Println("starting encode h264")
 	_ = ffmpeg.Input("pipe:",
 		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", width, height)}).
 		Output("pipe:", ffmpeg.KwArgs{"pix_fmt": "yuv420p", "vcodec": "libx264", "format": "flv", "r": 30, "vframes": 1}).
 		OverWriteOutput().
 		WithInput(buf).
-		WithOutput(out).
+		WithOutput(pw).
 		Run()
 	fmt.Println("encode h264 done")
 }
 
 func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
-	log.Println("Starting clip keyframe")
+	log.Println("waiting for flv of keyframe")
 
 	go func() {
-		var tmpBuf = make([]byte, 13) //去除头部字节
-		_, _ = io.ReadFull(reader, tmpBuf)
 
 		for i := 0; ; i++ {
+			i = i % 4
+			if i == 0 {
+				var tmpBuf = make([]byte, 13) //去除头部字节
+				_, _ = io.ReadFull(reader, tmpBuf)
+			}
+
 			header, _, err := ReadT(reader)
 			checkerr(err)
 			if header.TagType == byte(9) && header.DataSize > 100 {
@@ -41,7 +49,17 @@ func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
 	}()
 }
 
-func main() {
+func InitKeyProcess() {
+	fmt.Println("初始化编码抽帧模块")
+
+	pr, pw = io.Pipe()
+	keyChan = make(chan []byte, 1)
+	clipKeyframe(pr, keyChan) //等待编码好的关键帧视频包
+}
+
+func main1() {
+	InitKeyProcess()
+
 	resp, err := http.Get("http://127.0.0.1:5000/?img_path=/Users/nomad/Desktop/ffmpeg-go/tmp/2.png")
 	if err != nil {
 		panic(err)
@@ -50,11 +68,7 @@ func main() {
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 
-	pr, pw := io.Pipe()
-	keyChan := make(chan []byte, 1)
-	clipKeyframe(pr, keyChan) //等待编码好的关键帧视频包
-
-	encToH264(pw, bytes.NewReader(body), 1280, 720)
+	encToH264(bytes.NewReader(body), 1280, 720)
 	kF := <-keyChan
 	fmt.Println(len(kF))
 }
