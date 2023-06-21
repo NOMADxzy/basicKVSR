@@ -4,10 +4,8 @@ import (
 	"bytes"
 	ffmpeg "ffmpeg-go"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
-	"io/ioutil"
-	"log"
-	"net/http"
 )
 
 var pr *io.PipeReader
@@ -15,7 +13,7 @@ var pw *io.PipeWriter
 var keyChan chan []byte
 
 func encToH264(buf []byte) {
-	log.Println("starting encode h264")
+	Log.Debugf("starting encode h264")
 	_ = ffmpeg.Input("pipe:",
 		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", conf.w, conf.h)}).
 		Output("pipe:", ffmpeg.KwArgs{"pix_fmt": "yuv420p", "vcodec": "libx264", "format": "flv", "r": 30, "vframes": 1}).
@@ -23,11 +21,11 @@ func encToH264(buf []byte) {
 		WithInput(bytes.NewReader(buf)).
 		WithOutput(pw).
 		Run()
-	fmt.Println("encode h264 done")
+	Log.Debugf("encode h264 done")
 }
 
 func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
-	log.Println("waiting for flv of keyframe")
+	Log.Infof("waiting for flv of keyframe")
 
 	go func() {
 
@@ -38,10 +36,12 @@ func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
 				_, _ = io.ReadFull(reader, tmpBuf)
 			}
 
-			header, _, err := ReadT(reader)
-			checkerr(err)
+			header, _, err := ReadTag(reader)
+			checkErr(err)
 			if header.TagType == byte(9) && header.DataSize > 100 {
-				fmt.Println("截取关键帧大小=", header.DataSize+11)
+				Log.WithFields(logrus.Fields{
+					"size": header.DataSize + 11,
+				}).Debugf("截取关键帧")
 				keyChan <- header.TagBytes
 			}
 
@@ -50,85 +50,9 @@ func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
 }
 
 func InitKeyProcess() {
-	fmt.Println("初始化编码抽帧模块")
+	Log.Infof("初始化h264编码抽帧模块")
 
 	pr, pw = io.Pipe()
 	keyChan = make(chan []byte, 1)
 	clipKeyframe(pr, keyChan) //等待编码好的关键帧视频包
-}
-
-func main1() {
-	InitKeyProcess()
-
-	resp, err := http.Get("http://127.0.0.1:5000/?img_path=/Users/nomad/Desktop/ffmpeg-go/tmp/2.png")
-	if err != nil {
-		panic(err)
-	}
-
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-
-	encToH264(body)
-	kF := <-keyChan
-	fmt.Println(len(kF))
-}
-
-func checkerr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-type TagHead struct {
-	TagType   byte
-	DataSize  uint32
-	Timestamp uint32
-	pktHeader PacketHeader
-	TagBytes  []byte
-}
-
-func ReadT(reader io.ReadCloser) (header *TagHead, data []byte, err error) {
-	tmpBuf := make([]byte, 4)
-	header = &TagHead{}
-	// Read tag header
-	if _, err = io.ReadFull(reader, tmpBuf[3:]); err != nil {
-		return
-	}
-	header.TagType = tmpBuf[3]
-
-	// Read data size
-	if _, err = io.ReadFull(reader, tmpBuf[1:]); err != nil {
-		return
-	}
-	header.DataSize = uint32(tmpBuf[1])<<16 | uint32(tmpBuf[2])<<8 | uint32(tmpBuf[3])
-	tagBuf := make([]byte, 11+header.DataSize)
-	tagBuf[0] = header.TagType
-	copy(tagBuf[1:4], tmpBuf[1:])
-
-	// Read timestamp
-	if _, err = io.ReadFull(reader, tmpBuf); err != nil {
-		return
-	}
-	header.Timestamp = uint32(tmpBuf[3])<<24 + uint32(tmpBuf[0])<<16 + uint32(tmpBuf[1])<<8 + uint32(tmpBuf[2])
-	copy(tagBuf[4:8], tmpBuf)
-
-	// Read stream ID
-	if _, err = io.ReadFull(reader, tmpBuf[1:]); err != nil {
-		return
-	}
-	copy(tagBuf[8:], tmpBuf[1:])
-
-	data = make([]byte, header.DataSize)
-	if _, err = io.ReadFull(reader, data); err != nil {
-		return
-	}
-	copy(tagBuf[11:], data)
-	header.TagBytes = tagBuf
-
-	// Read previous tag size
-	if _, err = io.ReadFull(reader, tmpBuf); err != nil {
-		return
-	}
-
-	return
 }

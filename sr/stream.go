@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	ffmpeg "ffmpeg-go"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,16 +17,15 @@ import (
 // inFileName: input filename
 // outFileName: output filename
 // dream: Use DeepDream frame processing (requires tensorflow)
-var flvFile1 *File
 var seqBytes []byte
 
 func getVideoSize(fileName string) (int, int) {
-	log.Println("Getting video size for", fileName)
+	Log.Infof("Getting video size for", fileName)
 	data, err := ffmpeg.Probe(fileName)
 	if err != nil {
 		panic(err)
 	}
-	log.Println("got video info", data)
+	//log.Println("got video info", data)
 	type VideoInfo struct {
 		Streams []struct {
 			CodecType string `json:"codec_type"`
@@ -48,7 +47,7 @@ func getVideoSize(fileName string) (int, int) {
 }
 
 func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
-	log.Println("Starting transToFlv")
+	Log.Infof("Starting transToFlv")
 	done := make(chan error)
 	go func() {
 		err := ffmpeg.Input(infileName).
@@ -58,7 +57,7 @@ func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
 				}).
 			WithOutput(writer).
 			Run()
-		log.Println("ffmpeg process1 done")
+		Log.Infof("transToFlv done")
 		_ = writer.Close()
 		done <- err
 		close(done)
@@ -67,7 +66,7 @@ func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
 }
 
 func FSR(infileName string, writer io.WriteCloser) <-chan error {
-	log.Println("Starting ffmpeg sr")
+	Log.Infof("Starting ffmpeg sr")
 	done := make(chan error)
 	go func() {
 		err := ffmpeg.Input(infileName).
@@ -77,7 +76,7 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 				}).
 			WithOutput(writer).
 			Run()
-		log.Println("ffmpeg sr1 done")
+		Log.Infof("ffmpeg sr done")
 		//_ = writer.Close()
 		done <- err
 		close(done)
@@ -86,37 +85,8 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 	return done
 }
 
-func startFFmpegProcess2(reader io.Reader) <-chan error {
-	log.Println("Starting ffmpeg process2")
-	done := make(chan error)
-
-	//flvFile1, _ = CreateProtoFile("t.flv")
-
-	go func() {
-		//buf := make([]byte, 1000000)
-		//for {
-		//	dataRead := make([]byte, 200000)
-		//	n, _ := reader.Read(dataRead)
-		//	//fmt.Println(string(dataRead[:n]))
-		//	fmt.Println("读取了", n)
-		//	flvFile1.file.Write(dataRead[:n])
-		//}
-
-		err := ffmpeg.Input("pipe:",
-			ffmpeg.KwArgs{"format": "flv"}).
-			Output("test_out.flv", ffmpeg.KwArgs{"vcodec": "libx264", "format": "flv", "pix_fmt": "yuv420p"}).
-			OverWriteOutput().
-			WithInput(reader).
-			Run()
-		log.Println("ffmpeg process2 done")
-		done <- err
-		close(done)
-	}()
-	return done
-}
-
 func readKeyFrame(keyframeBytes []byte, id int) []byte {
-	log.Println("Starting read KeyFrame")
+	Log.Debugf("Starting read KeyFrame")
 
 	tmpFile, _ := CreateProtoFile(fmt.Sprintf("tmp/%d.flv", id))
 	tmpFile.file.Write(HEADER_BYTES)
@@ -128,13 +98,13 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 
 	command := exec.Command("ffmpeg", "-y", "-i", fmt.Sprintf("tmp/%d.flv", id), fmt.Sprintf("tmp/%d.png", id))
 	err := command.Run()
-	checkError(err)
+	checkErr(err)
 
 	os.Remove(fmt.Sprintf("tmp/%d.flv", id)) //移除无用文件
 
 	img_path := fmt.Sprintf("/Users/nomad/Desktop/ffmpeg-go/tmp/%d.png", id)
 	resp, err := http.Get("http://127.0.0.1:5000/?img_path=" + img_path)
-	checkerr(err)
+	checkErr(err)
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
@@ -173,16 +143,20 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 
 				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
 					//err = flvFile.WriteTagDirect(header.TagBytes)
-					checkError(err)
+					checkErr(err)
 
 					if vh.IsSeq() {
 						seqBytes = header.TagBytes
 
 					} else if vh.IsKeyFrame() {
 						keyTagBytes := readKeyFrame(header.TagBytes, id)
-						fmt.Println("instead keyFrame ,", header_fsr.DataSize+11, " to ", len(keyTagBytes), " - ", vh_fsr.IsKeyFrame())
+						Log.WithFields(logrus.Fields{
+							"new_size":    len(keyTagBytes),
+							"pre_size":    header_fsr.DataSize + 11,
+							"is_KeyFrame": vh_fsr.IsKeyFrame(),
+						}).Infof("instead keyFrame")
 						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
-						checkError(err)
+						checkErr(err)
 						continue
 					}
 				}
@@ -190,94 +164,14 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 
 			err = flvFile_vsr.WriteTagDirect(header_fsr.TagBytes) //非IDR帧数据保持原有
 			if vh_fsr.IsKeyFrame() {
-				fmt.Println("ignore key frame, size=", header_fsr.DataSize+11)
+				Log.WithFields(logrus.Fields{
+					"size":      header_fsr.DataSize + 11,
+					"timestamp": header_fsr.Timestamp,
+				}).Warnf("ignore key frame")
 			}
-			checkError(err)
+			checkErr(err)
 
 		}
 	}()
-	return
-}
-
-func checkErr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-type TagHeader struct {
-	TagType   byte
-	DataSize  uint32
-	Timestamp uint32
-	pktHeader PacketHeader
-	TagBytes  []byte
-}
-
-func ReadTag(reader io.ReadCloser) (header *TagHeader, data []byte, err error) {
-	tmpBuf := make([]byte, 4)
-	header = &TagHeader{}
-	// Read tag header
-	if _, err = io.ReadFull(reader, tmpBuf[3:]); err != nil {
-		return
-	}
-	header.TagType = tmpBuf[3]
-
-	// Read data size
-	if _, err = io.ReadFull(reader, tmpBuf[1:]); err != nil {
-		return
-	}
-	header.DataSize = uint32(tmpBuf[1])<<16 | uint32(tmpBuf[2])<<8 | uint32(tmpBuf[3])
-	tagBuf := make([]byte, 11+header.DataSize)
-	tagBuf[0] = header.TagType
-	copy(tagBuf[1:4], tmpBuf[1:])
-
-	// Read timestamp
-	if _, err = io.ReadFull(reader, tmpBuf); err != nil {
-		return
-	}
-	header.Timestamp = uint32(tmpBuf[3])<<24 + uint32(tmpBuf[0])<<16 + uint32(tmpBuf[1])<<8 + uint32(tmpBuf[2])
-	copy(tagBuf[4:8], tmpBuf)
-
-	// Read stream ID
-	if _, err = io.ReadFull(reader, tmpBuf[1:]); err != nil {
-		return
-	}
-	copy(tagBuf[8:], tmpBuf[1:])
-
-	// Read data
-	//lr := io.LimitReader(reader, int64(header.DataSize))
-	//switch header.TagType {
-	//case byte(9):
-	//	var v tag.VideoData
-	//	if err := tag.DecodeVideoData(lr, &v); err != nil {
-	//		fmt.Printf("failed to decode video data: %v\n", err)
-	//	}
-	//	break
-	//case byte(8):
-	//	var a tag.AudioData
-	//	if err := tag.DecodeAudioData(lr, &a); err != nil {
-	//		fmt.Printf("failed to decode audio data: %v\n", err)
-	//	}
-	//	break
-	//case byte(18):
-	//	var s tag.ScriptData
-	//	if err := tag.DecodeScriptData(lr, &s); err != nil {
-	//		fmt.Printf("failed to decode script data: %v\n", err)
-	//	}
-	//	break
-	//}
-
-	data = make([]byte, header.DataSize)
-	if _, err = io.ReadFull(reader, data); err != nil {
-		return
-	}
-	copy(tagBuf[11:], data)
-	header.TagBytes = tagBuf
-
-	// Read previous tag size
-	if _, err = io.ReadFull(reader, tmpBuf); err != nil {
-		return
-	}
-
 	return
 }

@@ -5,3 +5,4 @@
 *.go
 examples/
 sr/out_frame
+docs
