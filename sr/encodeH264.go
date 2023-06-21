@@ -14,13 +14,13 @@ var pr *io.PipeReader
 var pw *io.PipeWriter
 var keyChan chan []byte
 
-func encToH264(buf io.Reader, width, height int) {
+func encToH264(buf []byte) {
 	log.Println("starting encode h264")
 	_ = ffmpeg.Input("pipe:",
-		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", width, height)}).
+		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", conf.w, conf.h)}).
 		Output("pipe:", ffmpeg.KwArgs{"pix_fmt": "yuv420p", "vcodec": "libx264", "format": "flv", "r": 30, "vframes": 1}).
 		OverWriteOutput().
-		WithInput(buf).
+		WithInput(bytes.NewReader(buf)).
 		WithOutput(pw).
 		Run()
 	fmt.Println("encode h264 done")
@@ -68,7 +68,7 @@ func main1() {
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 
-	encToH264(bytes.NewReader(body), 1280, 720)
+	encToH264(body)
 	kF := <-keyChan
 	fmt.Println(len(kF))
 }

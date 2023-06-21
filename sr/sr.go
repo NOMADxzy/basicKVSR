@@ -3,7 +3,16 @@ package main
 import (
 	"io"
 	"log"
+	"path/filepath"
+	"strings"
 )
+
+type Config struct {
+	w int
+	h int
+}
+
+var conf *Config
 
 func main() {
 	inFile := "rtmp://127.0.0.1:1935/live/movie"
@@ -11,26 +20,27 @@ func main() {
 }
 
 func runSR(inFile string) {
-	video := "gua_180p.mp4"
-	video_fsr := "gua_fsr.mp4"
 
 	var err error
-	w, h := getVideoSize(video)
+	w, h := getVideoSize(inFile)
+	scale := 4
+	conf = &Config{w * scale, h * scale}
 	log.Println(w, h)
 
 	pr1, pw1 := io.Pipe()
 	pr2, pw2 := io.Pipe()
 	InitKeyProcess()
 
-	done1 := transToFlv(video, pw1) // 转码为flv
-	_ = transToFlv(video_fsr, pw2)
-	process(pr1, pr2) // 提取关键帧
+	done1 := transToFlv(inFile, pw1) // 转码为flv
+	done2 := FSR(inFile, pw2)
+
+	_, fileName := filepath.Split(inFile)
+	rawName := strings.Split(fileName, ".")[0]
+	processKSR(pr1, pr2, "out/"+rawName+".flv") // 提取关键帧
 	//done2 := startFFmpegProcess2(pr2)         // 解码
 
 	err = <-done1
 	checkErr(err)
-	if err != nil {
-		panic(err)
-	}
+	_ = <-done2
 	log.Println("Done")
 }

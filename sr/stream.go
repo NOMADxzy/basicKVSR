@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	ffmpeg "ffmpeg-go"
@@ -49,7 +48,7 @@ func getVideoSize(fileName string) (int, int) {
 }
 
 func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
-	log.Println("Starting ffmpeg process1")
+	log.Println("Starting transToFlv")
 	done := make(chan error)
 	go func() {
 		err := ffmpeg.Input(infileName).
@@ -67,21 +66,23 @@ func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
 	return done
 }
 
-func startFFmpegProcess3(reader io.Reader) <-chan error {
-	log.Println("Starting ffmpeg process3")
+func FSR(infileName string, writer io.WriteCloser) <-chan error {
+	log.Println("Starting ffmpeg sr")
 	done := make(chan error)
 	go func() {
-
-		err := ffmpeg.Input("pipe:",
-			ffmpeg.KwArgs{"format": "flv"}).
-			Output("fm_sr.flv", ffmpeg.KwArgs{"vf scale": "1440:-1"}).
-			OverWriteOutput().
-			WithInput(reader).
+		err := ffmpeg.Input(infileName).
+			Output("pipe:",
+				ffmpeg.KwArgs{
+					"s": fmt.Sprintf("%dx%d", conf.w, conf.h), "format": "flv", "vcodec": "libx264",
+				}).
+			WithOutput(writer).
 			Run()
-		log.Println("ffmpeg process3 done")
+		log.Println("ffmpeg sr1 done")
+		//_ = writer.Close()
 		done <- err
 		close(done)
 	}()
+
 	return done
 }
 
@@ -137,37 +138,41 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	encToH264(bytes.NewReader(body), 1280, 720) //会在keyChan中产生相应的超分tag
+	encToH264(body) //会在keyChan中产生相应的超分tag
 	return <-keyChan
 
 }
 
-func process(reader io.ReadCloser, reader_fsr io.ReadCloser) {
+func parseHeader(header *TagHeader, data []byte) {
+	var tag Tag
+	_, err := tag.ParseMediaTagHeader(data, header.TagType == byte(9))
+	checkErr(err)
+	header.pktHeader = &tag
+}
+
+func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) {
 	go func() {
 
 		var tmpBuf = make([]byte, 13) //去除头部字节
 		_, err := io.ReadFull(reader, tmpBuf)
 		checkErr(err)
-		_, err = io.ReadFull(reader_fsr, tmpBuf)
-		checkErr(err)
+		_, _ = io.ReadFull(reader_fsr, tmpBuf)
 
-		flvFile, _ := CreateFile("movie.flv")
-		flvFile_vsr, _ := CreateFile("movie_vsr.flv")
+		//flvFile, _ := CreateFile("movie.flv")
+		flvFile_vsr, _ := CreateFile(outfile)
 
 		for id := 0; ; id += 1 {
 			header, data, _ := ReadTag(reader)
-			header_fsr, _, _ := ReadTag(reader_fsr)
+			header_fsr, data_fsr, _ := ReadTag(reader_fsr)
 
-			var tag Tag
-			_, err = tag.ParseMediaTagHeader(data, header.TagType == byte(9))
-			checkErr(err)
-			header.pktHeader = &tag
+			parseHeader(header, data)
+			parseHeader(header_fsr, data_fsr)
+			vh_fsr, _ := header_fsr.pktHeader.(VideoPacketHeader)
 
 			if header.TagType == byte(9) {
 
 				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
-					//fmt.Println(vh.IsKeyFrame(), " ", len(data))
-					err = flvFile.WriteTagDirect(header.TagBytes)
+					//err = flvFile.WriteTagDirect(header.TagBytes)
 					checkError(err)
 
 					if vh.IsSeq() {
@@ -175,7 +180,7 @@ func process(reader io.ReadCloser, reader_fsr io.ReadCloser) {
 
 					} else if vh.IsKeyFrame() {
 						keyTagBytes := readKeyFrame(header.TagBytes, id)
-						fmt.Println("instead keyFrame ,", len(keyTagBytes))
+						fmt.Println("instead keyFrame ,", header_fsr.DataSize+11, " to ", len(keyTagBytes), " - ", vh_fsr.IsKeyFrame())
 						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
 						checkError(err)
 						continue
@@ -183,7 +188,10 @@ func process(reader io.ReadCloser, reader_fsr io.ReadCloser) {
 				}
 			}
 
-			err = flvFile_vsr.WriteTagDirect(header_fsr.TagBytes) //非关键帧或seq信息
+			err = flvFile_vsr.WriteTagDirect(header_fsr.TagBytes) //非IDR帧数据保持原有
+			if vh_fsr.IsKeyFrame() {
+				fmt.Println("ignore key frame, size=", header_fsr.DataSize+11)
+			}
 			checkError(err)
 
 		}
