@@ -1,4 +1,4 @@
-package main
+package sr
 
 import (
 	"io"
@@ -14,13 +14,7 @@ type Config struct {
 
 var conf *Config
 
-func main() {
-	//inFile := "rtmp://127.0.0.1:1935/live/movie"
-	inFile := "in/90p.mp4"
-	runSR(inFile)
-}
-
-func runSR(inFile string) {
+func RunSR(inFile string) {
 
 	var err error
 	initLog()
@@ -41,8 +35,8 @@ func runSR(inFile string) {
 	processKSR(pr1, pr2, "out/"+rawName+".flv") // 提取关键帧
 
 	err = <-done1
-	checkErr(err)
+	CheckErr(err)
 	_ = <-done2
-	checkErr(err)
+	CheckErr(err)
 	log.Println("Done")
 }

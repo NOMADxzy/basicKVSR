@@ -22,7 +22,7 @@ $ python inference_flask.py
 # 在项目root目录下
 $ go get # 下载相关的依赖包
 $ cd sr
-$ go run sr/*.go # 运行项目
+$ go run main.go # 运行项目
 ```
 
 ## Preview

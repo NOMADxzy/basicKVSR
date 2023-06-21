@@ -1,4 +1,4 @@
-package main
+package sr
 
 import (
 	"github.com/sirupsen/logrus"
@@ -69,8 +69,19 @@ func ReadTag(reader io.ReadCloser) (header *TagHeader, data []byte, err error) {
 	return
 }
 
-func checkErr(err error) {
+func CheckErr(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }

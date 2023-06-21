@@ -1,11 +1,11 @@
-package main
+package sr
 
 import (
 	"encoding/binary"
 	"encoding/json"
-	ffmpeg "ffmpeg-go"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	ffmpeg "github.com/u2takey/ffmpeg-go"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -98,13 +98,13 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 
 	command := exec.Command("ffmpeg", "-y", "-i", fmt.Sprintf("tmp/%d.flv", id), fmt.Sprintf("tmp/%d.png", id))
 	err := command.Run()
-	checkErr(err)
+	CheckErr(err)
 
 	os.Remove(fmt.Sprintf("tmp/%d.flv", id)) //移除无用文件
 
-	img_path := fmt.Sprintf("/Users/nomad/Desktop/ffmpeg-go/tmp/%d.png", id)
+	img_path := fmt.Sprintf("../tmp/%d.png", id)
 	resp, err := http.Get("http://127.0.0.1:5000/?img_path=" + img_path)
-	checkErr(err)
+	CheckErr(err)
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
@@ -116,7 +116,7 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 func parseHeader(header *TagHeader, data []byte) {
 	var tag Tag
 	_, err := tag.ParseMediaTagHeader(data, header.TagType == byte(9))
-	checkErr(err)
+	CheckErr(err)
 	header.pktHeader = &tag
 }
 
@@ -125,7 +125,7 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 
 		var tmpBuf = make([]byte, 13) //去除头部字节
 		_, err := io.ReadFull(reader, tmpBuf)
-		checkErr(err)
+		CheckErr(err)
 		_, _ = io.ReadFull(reader_fsr, tmpBuf)
 
 		//flvFile, _ := CreateFile("movie.flv")
@@ -143,7 +143,7 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 
 				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
 					//err = flvFile.WriteTagDirect(header.TagBytes)
-					checkErr(err)
+					CheckErr(err)
 
 					if vh.IsSeq() {
 						seqBytes = header.TagBytes
@@ -156,7 +156,7 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 							"is_KeyFrame": vh_fsr.IsKeyFrame(),
 						}).Infof("instead keyFrame")
 						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
-						checkErr(err)
+						CheckErr(err)
 						continue
 					}
 				}
@@ -169,7 +169,7 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 					"timestamp": header_fsr.Timestamp,
 				}).Warnf("ignore key frame")
 			}
-			checkErr(err)
+			CheckErr(err)
 
 		}
 	}()

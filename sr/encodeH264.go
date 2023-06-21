@@ -1,10 +1,10 @@
-package main
+package sr
 
 import (
 	"bytes"
-	ffmpeg "ffmpeg-go"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	ffmpeg "github.com/u2takey/ffmpeg-go"
 	"io"
 )
 
@@ -37,7 +37,7 @@ func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
 			}
 
 			header, _, err := ReadTag(reader)
-			checkErr(err)
+			CheckErr(err)
 			if header.TagType == byte(9) && header.DataSize > 100 {
 				Log.WithFields(logrus.Fields{
 					"size": header.DataSize + 11,
