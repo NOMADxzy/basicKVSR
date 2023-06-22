@@ -1,6 +1,7 @@
 package sr
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -9,14 +10,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
-	"os/exec"
 )
 
-// ExampleStream
-// inFileName: input filename
-// outFileName: output filename
-// dream: Use DeepDream frame processing (requires tensorflow)
 var seqBytes []byte
 
 func getVideoSize(fileName string) (int, int) {
@@ -72,7 +67,7 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 		err := ffmpeg.Input(infileName).
 			Output("pipe:",
 				ffmpeg.KwArgs{
-					"s": fmt.Sprintf("%dx%d", conf.w, conf.h), "format": "flv", "vcodec": "libx264",
+					"s": fmt.Sprintf("%dx%d", conf.W, conf.H), "format": "flv", "vcodec": "libx264",
 				}).
 			WithOutput(writer).
 			Run()
@@ -85,29 +80,38 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 	return done
 }
 
+var buf *bytes.Buffer
+
+func clipPreKeyframe(reader io.Reader) chan error {
+
+	buf = bytes.NewBuffer(nil)
+	done := make(chan error)
+	go func() {
+		err := ffmpeg.Input("pipe:",
+			ffmpeg.KwArgs{"format": "flv"}).
+			Output("pipe:", ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "rgb24"}).
+			WithInput(reader).
+			WithOutput(buf).
+			Run()
+		done <- err
+		close(done)
+	}()
+	return done
+}
+
 func readKeyFrame(keyframeBytes []byte, id int) []byte {
 	Log.Debugf("Starting read KeyFrame")
 
-	tmpFile, _ := CreateProtoFile(fmt.Sprintf("tmp/%d.flv", id))
-	tmpFile.file.Write(HEADER_BYTES)
-	tmpFile.file.Write(seqBytes)
-	binary.Write(tmpFile.file, binary.BigEndian, uint32(len(seqBytes)))
-	tmpFile.file.Write(keyframeBytes)
-	binary.Write(tmpFile.file, binary.BigEndian, uint32(len(keyframeBytes)))
-	tmpFile.Close()
+	tmpBuf := bytes.NewBuffer(HEADER_BYTES)
+	tmpBuf.Write(seqBytes)
+	binary.Write(tmpBuf, binary.BigEndian, uint32(len(seqBytes)))
+	tmpBuf.Write(keyframeBytes)
+	binary.Write(tmpBuf, binary.BigEndian, uint32(len(keyframeBytes)))
 
-	command := exec.Command("ffmpeg", "-y", "-i", fmt.Sprintf("tmp/%d.flv", id), fmt.Sprintf("tmp/%d.png", id))
-	err := command.Run()
-	CheckErr(err)
+	done := clipPreKeyframe(bytes.NewReader(tmpBuf.Bytes()))
+	<-done
+	body := PostImg(buf.Bytes())
 
-	os.Remove(fmt.Sprintf("tmp/%d.flv", id)) //移除无用文件
-
-	img_path := fmt.Sprintf("../tmp/%d.png", id)
-	resp, err := http.Get("http://127.0.0.1:5000/?img_path=" + img_path)
-	CheckErr(err)
-
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
 	encToH264(body) //会在keyChan中产生相应的超分tag
 	return <-keyChan
 
@@ -150,13 +154,14 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 
 					} else if vh.IsKeyFrame() {
 						keyTagBytes := readKeyFrame(header.TagBytes, id)
+						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
+						CheckErr(err)
+
 						Log.WithFields(logrus.Fields{
 							"new_size":    len(keyTagBytes),
 							"pre_size":    header_fsr.DataSize + 11,
 							"is_KeyFrame": vh_fsr.IsKeyFrame(),
 						}).Infof("instead keyFrame")
-						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
-						CheckErr(err)
 						continue
 					}
 				}
@@ -174,4 +179,20 @@ func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) 
 		}
 	}()
 	return
+}
+
+func PostImg(bytesData []byte) []byte {
+
+	request, err := http.NewRequest("POST", fmt.Sprintf("%s?w=%d&h=%d", conf.srApi, conf.w, conf.h), bytes.NewBuffer(bytesData))
+	CheckErr(err)
+	request.Header.Set("Content-Type", "application/json;charset=UTF-8")
+
+	client := http.Client{}
+	resp, err := client.Do(request)
+	CheckErr(err)
+
+	body, err := ioutil.ReadAll(resp.Body)
+	CheckErr(err)
+
+	return body
 }

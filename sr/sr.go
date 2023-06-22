@@ -8,8 +8,12 @@ import (
 )
 
 type Config struct {
-	w int
-	h int
+	w     int    //原视频宽
+	h     int    //原视频高
+	scale int    //超分倍数，默认4
+	W     int    //新视频宽
+	H     int    //新视频高
+	srApi string // sr后端服务地址
 }
 
 var conf *Config
@@ -20,7 +24,7 @@ func RunSR(inFile string) {
 	initLog()
 	w, h := getVideoSize(inFile)
 	scale := 4
-	conf = &Config{w * scale, h * scale}
+	conf = &Config{w, h, scale, w * scale, h * scale, "http://localhost:5001/"}
 	log.Println(w, h)
 
 	pr1, pw1 := io.Pipe()

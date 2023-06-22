@@ -2,7 +2,9 @@
 # coding=utf-8
 import argparse
 import glob
+import json
 import os
+import time
 
 import cv2
 import mmcv
@@ -15,7 +17,8 @@ from mmedit.core import tensor2img
 from realbasicvsr.models.builder import build_model
 import ffmpeg
 
-from flask import Flask,request
+from flask import Flask, request
+from PIL import Image
 
 
 def init_model(config, checkpoint=None):
@@ -43,13 +46,11 @@ class Worker:
         self.is_save_as_png = True
         self.max_seq_len = 2
         self.model = init_model(self.config, self.checkpoint_path)
+        self.frames = 1
 
-    def do_pic(self, input_image_path: str):
+    def do_pic(self, img):
         inputs = []
-        img = mmcv.imread(input_image_path, channel_order='rgb')
-        ext = os.path.basename(input_image_path).split('.')[-1]
         inputs.append(img)
-        # inputs.append(img)
         for i, img in enumerate(inputs):
             img = torch.from_numpy(img / 255.).permute(2, 0, 1).float()
             inputs[i] = img.unsqueeze(0)
@@ -66,50 +67,45 @@ class Worker:
 
         for i in range(0, outputs.size(1)):
             output = tensor2img(outputs[:, i, :, :, :])
-            filename = '{}.{}'.format(uuid.uuid1().hex, ext)
-            if self.is_save_as_png:
-                file_extension = os.path.splitext(filename)[1]
-            mmcv.imwrite(output, input_image_path)
+            mmcv.imwrite(output, '{}/{}.{}'.format("tmp", str(self.frames), "png"))
+            self.frames += 1
             return output
 
-process2 = (
-        ffmpeg
-        .input('pipe:', format='rawvideo', pix_fmt='bgr24', s='{}x{}'.format(1280, 720))
-        .output('pipe:', format='flv', pix_fmt='yuv420p',r=30, vframes=1)
-        .overwrite_output()
-        .run_async(pipe_stdin=True)
-    )
 
 worker = Worker()
 app = Flask(__name__)
+
+
 @app.route('/')
 def index():
-    img_path = request.args["img_path"]
-    print(img_path)
-    out_frame = worker.do_pic(img_path)
+    data = {
+        "project": "basicKVSR",
+        "author": "nomadxzy",
+        "time": "2023-06-21 22:36:15"
+    }
+
+    response = json.dumps(data)
+    return response, 200, {"Content-Type": "application/json"}
+
+
+@app.route('/', methods=['POST'])
+def sr():
+    raw_data = request.get_data()
+    w, h = int(request.args.get("w")), int(request.args.get("h"))
+    image = Image.frombytes('RGB', (w, h), raw_data)
+
+    img = np.array(image)
+    t1 = time.time()
+    out_frame = worker.do_pic(img)
+    t2 = time.time()
+    print("img received: {}x{}".format(w, h), ", sr time spend:", t2 - t1, "s")
+
     return out_frame.astype(np.uint8).tobytes()
 
 
 if __name__ == '__main__':
 
-    # out_frame = worker.do_pic('2.png')
-    # outframe = out_frame.astype(np.uint8).tobytes()
+    if not os.path.exists("tmp"):
+        os.mkdir("tmp")
 
-    app.run()
-
-
-    # out,_ = process2.stdin.write(
-    #     out_frame
-    #     .astype(np.uint8)
-    #     .tobytes()
-    # )
-
-    # out, _ = (
-    #     ffmpeg
-    #     .input('2.png', r=1)
-    #     .output('pipe:', format='h264', pix_fmt='yuv420p',r=30, vframes=1)
-    #     .run(capture_stdout=True)
-    # )
-    # with open("2.flv", "wb") as f:
-    #     f.write(out)
-
+    app.run(host="0.0.0.0", port=5001)

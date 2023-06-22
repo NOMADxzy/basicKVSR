@@ -85,3 +85,12 @@ func PathExists(path string) (bool, error) {
 	}
 	return false, err
 }
+
+func CreateDirs(dirs []string) {
+	for _, dir := range dirs {
+		if exist, _ := PathExists(dir); !exist { //文件夹不存在
+			err := os.Mkdir(dir, 0755)
+			CheckErr(err)
+		}
+	}
+}

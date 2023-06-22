@@ -8,18 +8,18 @@ import (
 	"io"
 )
 
-var pr *io.PipeReader
-var pw *io.PipeWriter
+var newKfPr *io.PipeReader
+var newKfPw *io.PipeWriter
 var keyChan chan []byte
 
 func encToH264(buf []byte) {
 	Log.Debugf("starting encode h264")
 	_ = ffmpeg.Input("pipe:",
-		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", conf.w, conf.h)}).
+		ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "bgr24", "s": fmt.Sprintf("%dx%d", conf.W, conf.H)}).
 		Output("pipe:", ffmpeg.KwArgs{"pix_fmt": "yuv420p", "vcodec": "libx264", "format": "flv", "r": 30, "vframes": 1}).
 		OverWriteOutput().
 		WithInput(bytes.NewReader(buf)).
-		WithOutput(pw).
+		WithOutput(newKfPw).
 		Run()
 	Log.Debugf("encode h264 done")
 }
@@ -52,7 +52,8 @@ func clipKeyframe(reader io.ReadCloser, keyChan chan []byte) {
 func InitKeyProcess() {
 	Log.Infof("初始化h264编码抽帧模块")
 
-	pr, pw = io.Pipe()
+	newKfPr, newKfPw = io.Pipe()
 	keyChan = make(chan []byte, 1)
-	clipKeyframe(pr, keyChan) //等待编码好的关键帧视频包
+	clipKeyframe(newKfPr, keyChan) //等待编码好的关键帧视频包
+
 }
