@@ -89,7 +89,7 @@ func clipPreKeyframe(reader io.Reader) chan error {
 	go func() {
 		err := ffmpeg.Input("pipe:",
 			ffmpeg.KwArgs{"format": "flv"}).
-			Output("pipe:", ffmpeg.KwArgs{"format": "rawvideo", "pix_fmt": "rgb24"}).
+			Output("pipe:", ffmpeg.KwArgs{"format": "rawvideo", "s": fmt.Sprintf("%dx%d", conf.w, conf.h), "pix_fmt": "rgb24"}).
 			WithInput(reader).
 			WithOutput(buf).
 			Run()

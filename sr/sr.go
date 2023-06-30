@@ -25,8 +25,8 @@ func RunSR(inFile string) {
 	w, h := getVideoSize(inFile)
 	scale := 4
 	conf = &Config{w, h, scale, w * scale, h * scale,
-		//"http://localhost:5000/",
-		"http://10.112.90.187:5000/",
+		"http://localhost:5001/",
+		//"http://10.112.90.187:5000/",
 	}
 	log.Println(w, h)
 
