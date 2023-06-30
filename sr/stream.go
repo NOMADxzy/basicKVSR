@@ -124,54 +124,52 @@ func parseHeader(header *TagHeader, data []byte) {
 	header.pktHeader = &tag
 }
 
-func processKSR(reader io.ReadCloser, reader_fsr io.ReadCloser, outfile string) {
+func processKSR(reader_fsr io.ReadCloser, outfile string) {
 	go func() {
 
 		var tmpBuf = make([]byte, 13) //去除头部字节
-		_, err := io.ReadFull(reader, tmpBuf)
+
+		_, err := io.ReadFull(reader_fsr, tmpBuf)
 		CheckErr(err)
-		_, _ = io.ReadFull(reader_fsr, tmpBuf)
 
 		//flvFile, _ := CreateFile("movie.flv")
 		flvFile_vsr, _ := CreateFile(outfile)
 
 		for id := 0; ; id += 1 {
-			header, data, _ := ReadTag(reader)
-			header_fsr, data_fsr, _ := ReadTag(reader_fsr)
+			headerFsr, dataFsr, _ := ReadTag(reader_fsr)
 
-			parseHeader(header, data)
-			parseHeader(header_fsr, data_fsr)
-			vh_fsr, _ := header_fsr.pktHeader.(VideoPacketHeader)
+			parseHeader(headerFsr, dataFsr)
+			vhFsr, _ := headerFsr.pktHeader.(VideoPacketHeader)
 
-			if header.TagType == byte(9) {
+			if headerFsr.TagType == byte(9) {
 
-				if vh, ok := header.pktHeader.(VideoPacketHeader); ok {
+				if vh, ok := headerFsr.pktHeader.(VideoPacketHeader); ok {
 					//err = flvFile.WriteTagDirect(header.TagBytes)
 					CheckErr(err)
 
 					if vh.IsSeq() {
-						seqBytes = header.TagBytes
+						seqBytes = headerFsr.TagBytes
 
 					} else if vh.IsKeyFrame() {
-						keyTagBytes := readKeyFrame(header.TagBytes, id)
+						keyTagBytes := readKeyFrame(headerFsr.TagBytes, id)
 						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
 						CheckErr(err)
 
 						Log.WithFields(logrus.Fields{
 							"new_size":    len(keyTagBytes),
-							"pre_size":    header_fsr.DataSize + 11,
-							"is_KeyFrame": vh_fsr.IsKeyFrame(),
+							"pre_size":    headerFsr.DataSize + 11,
+							"is_KeyFrame": vhFsr.IsKeyFrame(),
 						}).Infof("instead keyFrame")
 						continue
 					}
 				}
 			}
 
-			err = flvFile_vsr.WriteTagDirect(header_fsr.TagBytes) //非IDR帧数据保持原有
-			if vh_fsr.IsKeyFrame() {
+			err = flvFile_vsr.WriteTagDirect(headerFsr.TagBytes) //非IDR帧数据保持原有
+			if vhFsr.IsKeyFrame() {
 				Log.WithFields(logrus.Fields{
-					"size":      header_fsr.DataSize + 11,
-					"timestamp": header_fsr.Timestamp,
+					"size":      headerFsr.DataSize + 11,
+					"timestamp": headerFsr.Timestamp,
 				}).Warnf("ignore key frame")
 			}
 			CheckErr(err)

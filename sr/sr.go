@@ -30,19 +30,17 @@ func RunSR(inFile string) {
 	}
 	log.Println(w, h)
 
-	pr1, pw1 := io.Pipe()
+	//pr1, pw1 := io.Pipe()
 	pr2, pw2 := io.Pipe()
 	InitKeyProcess() //对超分后的图片进行h264编码的服务
 
-	done1 := transToFlv(inFile, pw1) // 转码为flv
-	done2 := FSR(inFile, pw2)
+	//done1 := transToFlv(inFile, pw1) // 转码为flv
+	done2 := FSR(inFile, pw2) //上采样
 
 	_, fileName := filepath.Split(inFile)
 	rawName := strings.Split(fileName, ".")[0]
-	processKSR(pr1, pr2, "out/"+rawName+".flv") // 提取关键帧
+	processKSR(pr2, "out/"+rawName+".flv") // 超分关键帧
 
-	err = <-done1
-	CheckErr(err)
 	_ = <-done2
 	CheckErr(err)
 	log.Println("Done")
