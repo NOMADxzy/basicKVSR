@@ -1,4 +1,4 @@
-# 视频超分系统
+# 关键帧视频超分辨率系统
 使用ffmpeg,realbasicVsr实现的一个视频快速超分系统（仅超分关键帧，并扩大非关键帧），仅供学习使用～
 
 
@@ -36,3 +36,19 @@ $ go run main.go # 运行项目
 ![图片太帅、无法显示](preview/3.png)
 ![图片太帅、无法显示](preview/4.png)
 ![图片太帅、无法显示](preview/5.png)
+
+## Compare
+```text
+90p_f.mp4：原视频
+90p.mp4：超分后
+```
+![图片太帅、无法显示](preview/2video.png)
+## Citation
+
+```text
+@article{cao2021vsrt,
+title={realbasic keyframe video super resolution},
+author={Zuyun Xu},
+year={2023}
+}
+```
