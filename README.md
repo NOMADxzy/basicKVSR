@@ -1,17 +1,37 @@
 # 关键帧视频超分辨率系统
-使用ffmpeg,realbasicVsr实现的一个视频快速超分系统（仅超分关键帧，并扩大非关键帧），仅供学习使用～
-
+使用ffmpeg,realbasicVsr实现的一个视频快速超分系统（仅超分关键帧，并扩大非关键帧），仅供学习使用～    
+![go](https://img.shields.io/badge/go-18.0+-blue.svg?style=plastic)
+![python](https://img.shields.io/badge/python-3.6+-blue.svg?style=plastic)
+<img alt="Tests Passing" src="https://github.com/anuraghazra/github-readme-stats/workflows/Test/badge.svg" />
+![platform](https://img.shields.io/badge/win/mac/linux-satisfied-655BE1.svg?style=plastic)
+![dockerfile](https://img.shields.io/badge/dockerfile-provided-655BE1.svg?style=plastic)
 
 ## Quick Start
+
+### Choice1 - Dockerfile自动化部署
+先[下载](https://drive.google.com/file/d/1OYR1J2GXE90Zu2gVU5xc0t0P_UmKH7ID/view)模型到 `realbasicvsr_flask/checkpoints/` 下
+
+```shell
+docker build -t sr -f ./Dockerfile ./ 
+docker run --name sr -dit -p 5000:5000 sr
+```
+准备视频`test.mp4`到 `in/`下 && 在main.go中指定 `inFile := "in/test.mp4"`    
+在 `sr/sr.go` 中指定后端地址 `http://localhost:5000/`
+```shell
+$ go get
+$ go run main.go 
+```
+
+### Choice2 - 手动部署
 
 1.启动RealBasicVSR后端
 ```shell
 $ cd flask_realbasicvsr
-# 下载相关的依赖包
-$ pip install openmim
-$ mim install mmcv-full
-$ pip install mmedit
+# 下载相关的依赖
 $ conda install pytorch::pytorch torchvision torchaudio -c pytorch
+
+$ pip install -r requirements.txt
+$ mim install mmcv-full
 
 # 运行
 $ python inference_flask.py
@@ -21,7 +41,6 @@ $ python inference_flask.py
 ```shell
 # 在项目root目录下
 $ go get # 下载相关的依赖包
-$ cd sr
 $ go run main.go # 运行项目
 ```
 
@@ -37,12 +56,22 @@ $ go run main.go # 运行项目
 ![图片太帅、无法显示](preview/4.png)
 ![图片太帅、无法显示](preview/5.png)
 
-## Compare
+## Benchmark
 ```text
-90p_f.mp4：原视频
-90p.mp4：超分后
+90p_fsr.mp4：超分前
+90p_ksr.mp4：关键帧超分
+90p_sr.mp4：全部帧超分
 ```
-![图片太帅、无法显示](preview/2video.png)
+![图片太帅、无法显示](preview/90p_3v.png)
+benchmark tool from [videobench](https://github.com/JNoDuq/videobench)
+
+
+## Support
+
+[RealBasicVSR](https://github.com/ckkelvinchan/RealBasicVSR)    
+[ffmpeg-go](https://github.com/u2takey/ffmpeg-go)
+
+
 ## Citation
 
 ```text

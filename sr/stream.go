@@ -110,6 +110,9 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 
 	done := clipPreKeyframe(bytes.NewReader(tmpBuf.Bytes()))
 	<-done
+	if len(buf.Bytes()) == 0 {
+		return nil
+	}
 	body := PostImg(buf.Bytes())
 
 	encToH264(body) //会在keyChan中产生相应的超分tag
@@ -152,15 +155,17 @@ func processKSR(reader_fsr io.ReadCloser, outfile string) {
 
 					} else if vh.IsKeyFrame() {
 						keyTagBytes := readKeyFrame(headerFsr.TagBytes, id)
-						err = flvFile_vsr.WriteTagDirect(keyTagBytes)
-						CheckErr(err)
+						if keyTagBytes != nil {
+							err = flvFile_vsr.WriteTagDirect(keyTagBytes)
+							CheckErr(err)
 
-						Log.WithFields(logrus.Fields{
-							"new_size":    len(keyTagBytes),
-							"pre_size":    headerFsr.DataSize + 11,
-							"is_KeyFrame": vhFsr.IsKeyFrame(),
-						}).Infof("instead keyFrame")
-						continue
+							Log.WithFields(logrus.Fields{
+								"new_size":    len(keyTagBytes),
+								"pre_size":    headerFsr.DataSize + 11,
+								"is_KeyFrame": vhFsr.IsKeyFrame(),
+							}).Infof("instead keyFrame")
+							continue
+						}
 					}
 				}
 			}

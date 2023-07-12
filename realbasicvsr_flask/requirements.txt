@@ -1,0 +1,4 @@
+openmim>=0.3.9
+mmedit>=0.16.1
+flask>=2.3.2
+ffmpeg-python>=0.2.0
