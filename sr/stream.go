@@ -41,19 +41,17 @@ func getVideoSize(fileName string) (int, int) {
 	return 0, 0
 }
 
-func transToFlv(infileName string, writer io.WriteCloser) <-chan error {
+func transToFlv(infileName string, outfileName string) <-chan error {
 	Log.Infof("Starting transToFlv")
 	done := make(chan error)
 	go func() {
 		err := ffmpeg.Input(infileName).
-			Output("pipe:",
+			Output(outfileName,
 				ffmpeg.KwArgs{
 					"vcodec": "copy", "format": "flv", "pix_fmt": "yuv420p",
 				}).
-			WithOutput(writer).
 			Run()
 		Log.Infof("transToFlv done")
-		_ = writer.Close()
 		done <- err
 		close(done)
 	}()
@@ -71,7 +69,7 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 				}).
 			WithOutput(writer).
 			Run()
-		Log.Infof("ffmpeg sr done")
+		Log.Infof("ffmpeg fsr done")
 		//_ = writer.Close()
 		done <- err
 		close(done)
@@ -127,16 +125,17 @@ func parseHeader(header *TagHeader, data []byte) {
 	header.pktHeader = &tag
 }
 
-func processKSR(reader_fsr io.ReadCloser, outfile string) {
+func processKSR(reader_fsr io.ReadCloser, outfile string) *bytes.Buffer {
+	//pr, pw := io.Pipe()
+	outBuf := bytes.NewBuffer(HEADER_BYTES)
 	go func() {
-
 		var tmpBuf = make([]byte, 13) //去除头部字节
 
 		_, err := io.ReadFull(reader_fsr, tmpBuf)
 		CheckErr(err)
 
-		//flvFile, _ := CreateFile("movie.flv")
 		flvFile_vsr, _ := CreateFile(outfile)
+		//pw.Write(HEADER_BYTES)
 
 		for id := 0; ; id += 1 {
 			headerFsr, dataFsr, _ := ReadTag(reader_fsr)
@@ -158,6 +157,8 @@ func processKSR(reader_fsr io.ReadCloser, outfile string) {
 						if keyTagBytes != nil {
 							err = flvFile_vsr.WriteTagDirect(keyTagBytes)
 							CheckErr(err)
+							//_, err := pw.Write(keyTagBytes)
+							outBuf.Write(keyTagBytes)
 
 							Log.WithFields(logrus.Fields{
 								"new_size":    len(keyTagBytes),
@@ -171,17 +172,23 @@ func processKSR(reader_fsr io.ReadCloser, outfile string) {
 			}
 
 			err = flvFile_vsr.WriteTagDirect(headerFsr.TagBytes) //非IDR帧数据保持原有
+			//_, err := pw.Write(headerFsr.TagBytes)
+			outBuf.Write(headerFsr.TagBytes)
 			if vhFsr.IsKeyFrame() {
 				Log.WithFields(logrus.Fields{
 					"size":      headerFsr.DataSize + 11,
 					"timestamp": headerFsr.Timestamp,
 				}).Warnf("ignore key frame")
+				if headerFsr.Timestamp > 0 {
+					//pw.Close()
+					//pr.Close()
+				}
 			}
 			CheckErr(err)
 
 		}
 	}()
-	return
+	return outBuf
 }
 
 func PostImg(bytesData []byte) []byte {

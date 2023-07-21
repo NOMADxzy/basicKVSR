@@ -36,13 +36,16 @@ func RunSR(inFile string) {
 	InitKeyProcess() //对超分后的图片进行h264编码的服务
 
 	//done1 := transToFlv(inFile, pw1) // 转码为flv
-	done2 := FSR(inFile, pw2) //上采样
+	fsrDone := FSR(inFile, pw2) //上采样
 
 	_, fileName := filepath.Split(inFile)
 	rawName := strings.Split(fileName, ".")[0]
-	processKSR(pr2, "out/"+rawName+".flv") // 超分关键帧
+	_ = processKSR(pr2, "out/"+rawName+".flv") // 超分关键帧
 
-	_ = <-done2
+	_ = <-fsrDone
 	CheckErr(err)
-	log.Println("Done")
+
+	transDone := transToFlv("out/"+rawName+".flv", "out/"+rawName+"s.flv")
+	_ = <-transDone
+	log.Println("All Done")
 }
