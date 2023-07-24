@@ -50,13 +50,13 @@ func CreateFile(name string) (flvFile *File, err error) {
 	// Write flv header
 	if _, err = file.Write(HEADER_BYTES); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 
 	// Sync to disk
 	if err = file.Sync(); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 
 	flvFile = &File{
@@ -80,7 +80,7 @@ func CreateProtoFile(name string) (flvFile *File, err error) {
 	// Sync to disk
 	if err = file.Sync(); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 
 	flvFile = &File{
@@ -105,11 +105,11 @@ func OpenFile(name string) (flvFile *File, err error) {
 	var size int64
 	if size, err = file.Seek(0, 2); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 	if _, err = file.Seek(0, 0); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 
 	flvFile = &File{
@@ -126,13 +126,13 @@ func OpenFile(name string) (flvFile *File, err error) {
 
 	if _, err = io.ReadFull(file, flvHeader); err != nil {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 	if flvHeader[0] != 'F' ||
 		flvHeader[1] != 'L' ||
 		flvHeader[2] != 'V' {
 		err := file.Close()
-		checkError(err)
+		CheckErr(err)
 		return nil, errors.New("File format error")
 	}
 
@@ -142,7 +142,7 @@ func OpenFile(name string) (flvFile *File, err error) {
 func (flvFile *File) Close() {
 	if flvFile != nil {
 		err := flvFile.file.Close()
-		checkError(err)
+		CheckErr(err)
 	}
 }
 
@@ -319,14 +319,8 @@ func (flvFile *File) IsFinished() bool {
 }
 func (flvFile *File) LoopBack() {
 	_, err := flvFile.file.Seek(HEADER_LEN, 0)
-	checkError(err)
+	CheckErr(err)
 }
 func (flvFile *File) FilePath() string {
 	return flvFile.name
-}
-
-func checkError(err error) {
-	if err != nil {
-		panic(err)
-	}
 }

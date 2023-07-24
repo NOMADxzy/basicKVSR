@@ -25,13 +25,11 @@ func RunSR(inFile string) {
 	w, h := getVideoSize(inFile)
 	scale := 4
 	conf = &Config{w, h, scale, w * scale, h * scale,
-		"http://localhost:5000/",
-		//"http://10.112.90.187:5000/",
-		//"http://10.128.202.224:5000/",
+		//"http://localhost:5000/",
+		//"http://10.112.90.187:5001/",
+		"http://10.112.55.254:5001",
 	}
-	log.Println(w, h)
 
-	//pr1, pw1 := io.Pipe()
 	pr2, pw2 := io.Pipe()
 	InitKeyProcess() //对超分后的图片进行h264编码的服务
 
@@ -40,12 +38,13 @@ func RunSR(inFile string) {
 
 	_, fileName := filepath.Split(inFile)
 	rawName := strings.Split(fileName, ".")[0]
-	_ = processKSR(pr2, "out/"+rawName+".flv") // 超分关键帧
+
+	_ = processKSR(pr2, "out/"+rawName+".flv") // 对上采样后的视频中关键帧下采样再超分，其他帧保持不变，即可正确解码
 
 	_ = <-fsrDone
 	CheckErr(err)
 
-	transDone := transToFlv("out/"+rawName+".flv", "out/"+rawName+"s.flv")
-	_ = <-transDone
+	//transDone := transToFlv("out/"+rawName+".flv", "out/"+rawName+"s.flv")
+	//_ = <-transDone
 	log.Println("All Done")
 }

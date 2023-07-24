@@ -13,9 +13,9 @@ import (
 )
 
 func main() {
-	sr.CreateDirs([]string{"in/", "out/", "tmp/"})
+	sr.CreateDirs([]string{"out/"})
 
 	//inFile := "rtmp://127.0.0.1:1935/live/movie"
-	inFile := "in/180p.mp4"
+	inFile := "in/xq_180p.mp4"
 	sr.RunSR(inFile)
 }

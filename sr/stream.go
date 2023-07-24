@@ -12,7 +12,8 @@ import (
 	"net/http"
 )
 
-var seqBytes []byte
+var seqBytes []byte   // 视频的解码参数信息
+var buf *bytes.Buffer // 图像缓存
 
 func getVideoSize(fileName string) (int, int) {
 	Log.Infof("Getting video size for", fileName)
@@ -41,15 +42,17 @@ func getVideoSize(fileName string) (int, int) {
 	return 0, 0
 }
 
-func transToFlv(infileName string, outfileName string) <-chan error {
+func transToFlv(pr io.ReadCloser, outfile string) <-chan error {
 	Log.Infof("Starting transToFlv")
 	done := make(chan error)
 	go func() {
-		err := ffmpeg.Input(infileName).
-			Output(outfileName,
+		err := ffmpeg.Input("pipe:").
+			Output(outfile,
 				ffmpeg.KwArgs{
 					"vcodec": "copy", "format": "flv", "pix_fmt": "yuv420p",
 				}).
+			WithInput(pr).
+			OverWriteOutput().
 			Run()
 		Log.Infof("transToFlv done")
 		done <- err
@@ -78,8 +81,6 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 	return done
 }
 
-var buf *bytes.Buffer
-
 func clipPreKeyframe(reader io.Reader) chan error {
 
 	buf = bytes.NewBuffer(nil)
@@ -97,25 +98,30 @@ func clipPreKeyframe(reader io.Reader) chan error {
 	return done
 }
 
-func readKeyFrame(keyframeBytes []byte, id int) []byte {
-	Log.Debugf("Starting read KeyFrame")
-
+func constructSingleFlv(keyframeBytes []byte) []byte {
 	tmpBuf := bytes.NewBuffer(HEADER_BYTES)
 	tmpBuf.Write(seqBytes)
 	binary.Write(tmpBuf, binary.BigEndian, uint32(len(seqBytes)))
 	tmpBuf.Write(keyframeBytes)
 	binary.Write(tmpBuf, binary.BigEndian, uint32(len(keyframeBytes)))
+	return tmpBuf.Bytes()
+}
 
-	done := clipPreKeyframe(bytes.NewReader(tmpBuf.Bytes()))
+func readKeyFrame(keyframeBytes []byte, id int) []byte {
+	Log.Debugf("Starting read KeyFrame")
+
+	singleFlvBytes := constructSingleFlv(keyframeBytes)
+
+	done := clipPreKeyframe(bytes.NewReader(singleFlvBytes)) //调用ffmpeg解码出图像
 	<-done
-	if len(buf.Bytes()) == 0 {
+	if len(buf.Bytes()) > 0 {
+		body := PostImg(buf.Bytes()) //耗时操作1
+
+		encToH264(body) //会在keyChan中产生相应的超分tag
+		return <-keyChan
+	} else {
 		return nil
 	}
-	body := PostImg(buf.Bytes())
-
-	encToH264(body) //会在keyChan中产生相应的超分tag
-	return <-keyChan
-
 }
 
 func parseHeader(header *TagHeader, data []byte) {
@@ -125,20 +131,22 @@ func parseHeader(header *TagHeader, data []byte) {
 	header.pktHeader = &tag
 }
 
-func processKSR(reader_fsr io.ReadCloser, outfile string) *bytes.Buffer {
-	//pr, pw := io.Pipe()
-	outBuf := bytes.NewBuffer(HEADER_BYTES)
+func processKSR(readerFsr io.ReadCloser, outfile string) <-chan error { //flv流的方式读入视频，对关键帧先降分辨率再超分
+	pr, pw := io.Pipe()
+	TransDone := transToFlv(pr, outfile) //将重组后的flv流再转码一次，否则大部分播放器无法正确播放
+
 	go func() {
 		var tmpBuf = make([]byte, 13) //去除头部字节
 
-		_, err := io.ReadFull(reader_fsr, tmpBuf)
+		_, err := io.ReadFull(readerFsr, tmpBuf)
 		CheckErr(err)
 
-		flvFile_vsr, _ := CreateFile(outfile)
-		//pw.Write(HEADER_BYTES)
+		//flvFile_vsr, _ := CreateFile(outfile)
+		_, err = pw.Write(HEADER_BYTES)
+		CheckErr(err)
 
 		for id := 0; ; id += 1 {
-			headerFsr, dataFsr, _ := ReadTag(reader_fsr)
+			headerFsr, dataFsr, _ := ReadTag(readerFsr)
 
 			parseHeader(headerFsr, dataFsr)
 			vhFsr, _ := headerFsr.pktHeader.(VideoPacketHeader)
@@ -146,19 +154,20 @@ func processKSR(reader_fsr io.ReadCloser, outfile string) *bytes.Buffer {
 			if headerFsr.TagType == byte(9) {
 
 				if vh, ok := headerFsr.pktHeader.(VideoPacketHeader); ok {
-					//err = flvFile.WriteTagDirect(header.TagBytes)
 					CheckErr(err)
 
 					if vh.IsSeq() {
 						seqBytes = headerFsr.TagBytes
 
-					} else if vh.IsKeyFrame() {
+					} else if vh.IsKeyFrame() { //耗时操作2，需要等到关键帧超分完插入后再读取后面的非关键帧直到下一个关键帧
 						keyTagBytes := readKeyFrame(headerFsr.TagBytes, id)
 						if keyTagBytes != nil {
-							err = flvFile_vsr.WriteTagDirect(keyTagBytes)
+							//err = flvFile_vsr.WriteTagDirect(keyTagBytes)
 							CheckErr(err)
-							//_, err := pw.Write(keyTagBytes)
-							outBuf.Write(keyTagBytes)
+							_, err := pw.Write(keyTagBytes)
+							CheckErr(err)
+							err = binary.Write(pw, binary.BigEndian, uint32(len(keyTagBytes)))
+							CheckErr(err)
 
 							Log.WithFields(logrus.Fields{
 								"new_size":    len(keyTagBytes),
@@ -171,27 +180,26 @@ func processKSR(reader_fsr io.ReadCloser, outfile string) *bytes.Buffer {
 				}
 			}
 
-			err = flvFile_vsr.WriteTagDirect(headerFsr.TagBytes) //非IDR帧数据保持原有
-			//_, err := pw.Write(headerFsr.TagBytes)
-			outBuf.Write(headerFsr.TagBytes)
+			//err = flvFile_vsr.WriteTagDirect(headerFsr.TagBytes)
+			_, err := pw.Write(headerFsr.TagBytes) //非IDR帧数据保持原有
+			CheckErr(err)
+			err = binary.Write(pw, binary.BigEndian, uint32(len(headerFsr.TagBytes)))
+			CheckErr(err)
 			if vhFsr.IsKeyFrame() {
 				Log.WithFields(logrus.Fields{
 					"size":      headerFsr.DataSize + 11,
 					"timestamp": headerFsr.Timestamp,
 				}).Warnf("ignore key frame")
-				if headerFsr.Timestamp > 0 {
-					//pw.Close()
-					//pr.Close()
-				}
+
 			}
 			CheckErr(err)
 
 		}
 	}()
-	return outBuf
+	return TransDone
 }
 
-func PostImg(bytesData []byte) []byte {
+func PostImg(bytesData []byte) []byte { //调用后端超分
 
 	request, err := http.NewRequest("POST", fmt.Sprintf("%s?w=%d&h=%d", conf.srApi, conf.w, conf.h), bytes.NewBuffer(bytesData))
 	CheckErr(err)
