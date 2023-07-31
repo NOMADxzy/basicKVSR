@@ -28,6 +28,7 @@ func RunSR(inFile string) {
 		//"http://localhost:5000/",
 		//"http://10.112.90.187:5001/",
 		"http://10.112.55.254:5001",
+		//"http://10.112.245.149:5001",
 	}
 
 	pr2, pw2 := io.Pipe()
@@ -39,9 +40,10 @@ func RunSR(inFile string) {
 	_, fileName := filepath.Split(inFile)
 	rawName := strings.Split(fileName, ".")[0]
 
-	_ = processKSR(pr2, "out/"+rawName+".flv") // 对上采样后的视频中关键帧下采样再超分，其他帧保持不变，即可正确解码
+	_, ksrDone := processKSR(pr2, "out/"+rawName+".flv") // 对上采样后的视频中关键帧下采样再超分，其他帧保持不变，即可正确解码
 
-	_ = <-fsrDone
+	err = <-fsrDone
+	_ = <-ksrDone
 	CheckErr(err)
 
 	//transDone := transToFlv("out/"+rawName+".flv", "out/"+rawName+"s.flv")

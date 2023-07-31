@@ -16,6 +16,7 @@ var seqBytes []byte   // 视频的解码参数信息
 var buf *bytes.Buffer // 图像缓存
 
 func getVideoSize(fileName string) (int, int) {
+	return 160, 90
 	Log.Infof("Getting video size for", fileName)
 	data, err := ffmpeg.Probe(fileName)
 	if err != nil {
@@ -107,7 +108,7 @@ func constructSingleFlv(keyframeBytes []byte) []byte {
 	return tmpBuf.Bytes()
 }
 
-func readKeyFrame(keyframeBytes []byte, id int) []byte {
+func readKeyFrame(keyframeBytes []byte, id int) {
 	Log.Debugf("Starting read KeyFrame")
 
 	singleFlvBytes := constructSingleFlv(keyframeBytes)
@@ -118,9 +119,9 @@ func readKeyFrame(keyframeBytes []byte, id int) []byte {
 		body := PostImg(buf.Bytes()) //耗时操作1
 
 		encToH264(body) //会在keyChan中产生相应的超分tag
-		return <-keyChan
+		//return <-keyChan
 	} else {
-		return nil
+		keyChan <- nil
 	}
 }
 
@@ -131,7 +132,15 @@ func parseHeader(header *TagHeader, data []byte) {
 	header.pktHeader = &tag
 }
 
-func processKSR(readerFsr io.ReadCloser, outfile string) <-chan error { //flv流的方式读入视频，对关键帧先降分辨率再超分
+func writeTagToChan(pw io.Writer, tagBytes []byte) {
+	_, err := pw.Write(tagBytes)
+	CheckErr(err)
+	err = binary.Write(pw, binary.BigEndian, uint32(len(tagBytes)))
+	CheckErr(err)
+}
+
+func processKSR(readerFsr io.ReadCloser, outfile string) (<-chan error, <-chan error) { //flv流的方式读入视频，对关键帧先降分辨率再超分
+	ksrDone := make(chan error)
 	pr, pw := io.Pipe()
 	TransDone := transToFlv(pr, outfile) //将重组后的flv流再转码一次，否则大部分播放器无法正确播放
 
@@ -145,46 +154,58 @@ func processKSR(readerFsr io.ReadCloser, outfile string) <-chan error { //flv流
 		_, err = pw.Write(HEADER_BYTES)
 		CheckErr(err)
 
+		GopBytes := bytes.NewBuffer(nil)
+		waitForKeyframe := false
+
 		for id := 0; ; id += 1 {
 			headerFsr, dataFsr, _ := ReadTag(readerFsr)
 
 			parseHeader(headerFsr, dataFsr)
-			vhFsr, _ := headerFsr.pktHeader.(VideoPacketHeader)
+			vhFsr, ok := headerFsr.pktHeader.(VideoPacketHeader)
 
 			if headerFsr.TagType == byte(9) {
 
-				if vh, ok := headerFsr.pktHeader.(VideoPacketHeader); ok {
+				if ok {
 					CheckErr(err)
 
-					if vh.IsSeq() {
+					if vhFsr.IsSeq() {
 						seqBytes = headerFsr.TagBytes
 
-					} else if vh.IsKeyFrame() { //耗时操作2，需要等到关键帧超分完插入后再读取后面的非关键帧直到下一个关键帧
-						keyTagBytes := readKeyFrame(headerFsr.TagBytes, id)
-						if keyTagBytes != nil {
-							//err = flvFile_vsr.WriteTagDirect(keyTagBytes)
-							CheckErr(err)
-							_, err := pw.Write(keyTagBytes)
-							CheckErr(err)
-							err = binary.Write(pw, binary.BigEndian, uint32(len(keyTagBytes)))
-							CheckErr(err)
-
-							Log.WithFields(logrus.Fields{
-								"new_size":    len(keyTagBytes),
-								"pre_size":    headerFsr.DataSize + 11,
-								"is_KeyFrame": vhFsr.IsKeyFrame(),
-							}).Infof("instead keyFrame")
-							continue
+					} else if vhFsr.IsKeyFrame() { //耗时操作2，需要等到关键帧超分完插入后再读取后面的非关键帧直到下一个关键帧
+						if waitForKeyframe {
+							Log.Infof("read from keychan")
+							keyTagBytes := <-keyChan
+							if keyTagBytes != nil {
+								waitForKeyframe = false
+								writeTagToChan(pw, keyTagBytes)
+								//writeTagToChan(pw, GopBytes.Bytes())
+								GopBytes.WriteTo(pw)
+								Log.WithFields(logrus.Fields{
+									"new_size":    len(keyTagBytes),
+									"pre_size":    headerFsr.DataSize + 11,
+									"is_KeyFrame": vhFsr.IsKeyFrame(),
+								}).Infof("instead keyFrame")
+							}
 						}
+						if headerFsr.TagBytes[12] == byte(2) { // end of sequence
+							writeTagToChan(pw, headerFsr.TagBytes)
+							Log.Infof("ksr done")
+							ksrDone <- nil
+							close(ksrDone)
+						}
+						go readKeyFrame(headerFsr.TagBytes, id)
+						waitForKeyframe = true
+						continue
 					}
 				}
 			}
 
 			//err = flvFile_vsr.WriteTagDirect(headerFsr.TagBytes)
-			_, err := pw.Write(headerFsr.TagBytes) //非IDR帧数据保持原有
-			CheckErr(err)
-			err = binary.Write(pw, binary.BigEndian, uint32(len(headerFsr.TagBytes)))
-			CheckErr(err)
+			if !waitForKeyframe {
+				writeTagToChan(pw, headerFsr.TagBytes)
+			} else {
+				writeTagToChan(GopBytes, headerFsr.TagBytes)
+			}
 			if vhFsr.IsKeyFrame() {
 				Log.WithFields(logrus.Fields{
 					"size":      headerFsr.DataSize + 11,
@@ -196,11 +217,14 @@ func processKSR(readerFsr io.ReadCloser, outfile string) <-chan error { //flv流
 
 		}
 	}()
-	return TransDone
+	return TransDone, ksrDone
 }
 
 func PostImg(bytesData []byte) []byte { //调用后端超分
 
+	Log.WithFields(logrus.Fields{
+		"img_data_size": len(bytesData),
+	}).Infof("post sr bankend")
 	request, err := http.NewRequest("POST", fmt.Sprintf("%s?w=%d&h=%d", conf.srApi, conf.w, conf.h), bytes.NewBuffer(bytesData))
 	CheckErr(err)
 	request.Header.Set("Content-Type", "application/json;charset=UTF-8")
