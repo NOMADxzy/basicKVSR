@@ -6,6 +6,14 @@
 ![platform](https://img.shields.io/badge/win/mac/linux-satisfied-655BE1.svg?style=plastic)
 ![dockerfile](https://img.shields.io/badge/dockerfile-provided-655BE1.svg?style=plastic)
 
+## 框架原理
+![img.png](preview/system.png)
+
+1. 使用realBasicVSR 对关键帧超分辨率
+2. 使用ffmpeg对流媒体视频进行关键帧提取、重组、转码等操作
+
+https://github.com/NOMADxzy/basicKVSR/assets/52481325/c9271faf-259b-435e-9a6b-627630c8bcf2
+
 ## Quick Start
 
 ### Choice1 - Dockerfile自动化部署
