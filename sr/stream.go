@@ -68,7 +68,10 @@ func FSR(infileName string, writer io.WriteCloser) <-chan error {
 		err := ffmpeg.Input(infileName).
 			Output("pipe:",
 				ffmpeg.KwArgs{
-					"s": fmt.Sprintf("%dx%d", conf.W, conf.H), "format": "flv", "vcodec": "libx264",
+					"s": fmt.Sprintf("%dx%d", conf.W, conf.H),
+					"g":          conf.GopSize,
+					 "format": "flv",
+					 "vcodec": "libx264",
 				}).
 			WithOutput(writer).
 			Run()
@@ -170,6 +173,7 @@ func processKSR(readerFsr io.ReadCloser, outfile string) <-chan error { //flv流
 							CheckErr(err)
 
 							Log.WithFields(logrus.Fields{
+							    "tag_id":      id,
 								"new_size":    len(keyTagBytes),
 								"pre_size":    headerFsr.DataSize + 11,
 								"is_KeyFrame": vhFsr.IsKeyFrame(),

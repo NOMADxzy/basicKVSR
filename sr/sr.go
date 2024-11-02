@@ -14,6 +14,7 @@ type Config struct {
 	W     int    //新视频宽
 	H     int    //新视频高
 	srApi string // sr后端服务地址
+    GopSize int  // 固定gop序列长度
 }
 
 var conf *Config
@@ -25,9 +26,10 @@ func RunSR(inFile string) {
 	w, h := getVideoSize(inFile)
 	scale := 4
 	conf = &Config{w, h, scale, w * scale, h * scale,
-		//"http://localhost:5000/",
+		"http://localhost:5001/",
 		//"http://10.112.90.187:5001/",
-		"http://10.112.55.254:5001",
+		//"http://10.112.55.254:5001",
+		10, // 最大GOP间隔，决定keyframe频率
 	}
 
 	pr2, pw2 := io.Pipe()
